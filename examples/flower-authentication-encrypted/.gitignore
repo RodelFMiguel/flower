@@ -1,0 +1,10 @@
+venv/
+datasets/
+keys/
+certificates/
+encryption_keys/
+.credentials
+*.pt
+__pycache__/
+*.pyc
+.flwr/
