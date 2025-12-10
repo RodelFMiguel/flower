@@ -1,0 +1,23 @@
+# Virtual environments
+venv/
+.venv/
+test_env/
+*_env/
+env/
+.env/
+datasets/
+keys/
+certificates/
+encryption_keys/
+.credentials
+*.pt
+__pycache__/
+*.pyc
+.flwr/
+.git/
+.gitignore
+.flowerignore
+*.log
+prepare_dataset_simple.py
+tmp_cifar10/
+final_model_encrypted.pt
