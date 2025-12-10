@@ -46,19 +46,23 @@ flower-authentication-encrypted
 ├── generate_auth_keys.sh    # Generate authentication keys  
 ├── generate_encryption_keys.sh # Generate encryption keys for weight protection
 ├── prepare_dataset.py       # Generate datasets for each SuperNode to use
+├── .gitignore              # Git ignore file
+├── .flowerignore           # Flower packaging ignore file (excludes large datasets)
 └── README.md
 ```
 
 ### Install dependencies and project
 
-First, create and activate a virtual environment for better isolation:
+First, create and activate a virtual environment for better isolation. **Important**: Create the virtual environment outside the project directory to avoid FAB size issues:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+cd ..
+python3 -m venv flower_auth_env
+source flower_auth_env/bin/activate  # On Windows: flower_auth_env\Scripts\activate
+cd flower-authentication-encrypted
 ```
 
-Install the dependencies defined in `pyproject.toml` as well as the `authexample` package.
+Install the dependencies defined in `pyproject.toml` as well as the `authexample` package:
 
 ```bash
 pip install -e .
@@ -272,6 +276,13 @@ The encrypted weights are transmitted as numpy arrays of `uint8` dtype, containi
    ```bash
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
+
+6. **FAB Size Exceeds Limit**: If you get "FAB size exceeds maximum allowed size" error:
+   - Ensure `.flowerignore` file exists and includes common virtual environment names
+   - Remove large directories: `rm -rf datasets/ venv/ .venv/ *_env/ *.pt`
+   - The virtual environment should be created outside the project directory
+   - Datasets will be recreated automatically when SuperNodes start
+   - The FAB package should be <1MB for successful deployment
 
 ### Testing Steps
 

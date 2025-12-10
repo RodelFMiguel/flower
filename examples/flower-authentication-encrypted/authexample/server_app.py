@@ -115,10 +115,8 @@ class EncryptedFedAvg(FedAvg):
         metrics_list = []
 
         for reply in replies:
-            # Get string node ID from metrics and Grid node ID from metadata
-            node_id_str = reply.content.get("metrics", MetricRecord({})).data.get(
-                "node-id", "unknown"
-            )
+            # Get string node ID from content and Grid node ID from metadata
+            node_id_str = reply.content.get("node_config", ConfigRecord({})).get("node_id", "unknown")
             grid_node_id = reply.metadata.src_node_id
 
             # Build mapping from Grid ID to string node ID
@@ -129,27 +127,38 @@ class EncryptedFedAvg(FedAvg):
             # Decrypt weights from this specific node
             if node_id_str in self.encryptors:
                 try:
-                    arrays_list = reply.content["arrays"].to_numpy()
-                    if len(arrays_list) > 0 and arrays_list[0].dtype.name == "uint8":
-                        # Encrypted weights
-                        log(INFO, f"[Server] Decrypting weights from node {node_id_str}")
-                        encryptor = self.encryptors[node_id_str]
-                        encrypted_array = arrays_list[0]
-                        state_dict = encryptor.decrypt_state_dict(encrypted_array)
-                        decrypted_weights.append(ArrayRecord(state_dict))
+                    arrays_list = reply.content["arrays"].to_numpy_ndarrays()
+                    log(INFO, f"[Server] Arrays from {node_id_str}: {len(arrays_list)} arrays")
+                    if len(arrays_list) > 0:
+                        log(INFO, f"[Server] First array dtype: {arrays_list[0].dtype}, shape: {arrays_list[0].shape}")
+                        
+                        if arrays_list[0].dtype.name == "uint8":
+                            # Encrypted weights
+                            log(INFO, f"[Server] Detected encrypted weights from node {node_id_str}")
+                            encryptor = self.encryptors[node_id_str]
+                            encrypted_array = arrays_list[0]
+                            log(INFO, f"[Server] Decrypting array of size {len(encrypted_array)}...")
+                            state_dict = encryptor.decrypt_state_dict(encrypted_array)
+                            log(INFO, f"[Server] Decrypted state_dict keys: {list(state_dict.keys())}")
+                            decrypted_weights.append(ArrayRecord(state_dict))
+                        else:
+                            # Unencrypted weights (first round)
+                            log(INFO, f"[Server] Detected unencrypted weights from node {node_id_str}")
+                            state_dict = reply.content["arrays"].to_torch_state_dict()
+                            log(INFO, f"[Server] Unencrypted state_dict keys: {list(state_dict.keys())}")
+                            decrypted_weights.append(ArrayRecord(state_dict))
                     else:
-                        # Unencrypted weights (first round)
-                        log(INFO, f"[Server] Receiving unencrypted weights from node {node_id_str}")
-                        state_dict = reply.content["arrays"].to_torch_state_dict()
-                        decrypted_weights.append(ArrayRecord(state_dict))
-                except Exception:
+                        log(INFO, f"[Server] No arrays received from node {node_id_str}")
+                        continue
+                except Exception as e:
+                    log(INFO, f"[Server] Exception processing weights from {node_id_str}: {e}")
                     # Fallback: try to parse as state dict directly
-                    log(INFO, f"[Server] Receiving unencrypted weights from node {node_id_str}")
+                    log(INFO, f"[Server] Fallback: Receiving unencrypted weights from node {node_id_str}")
                     state_dict = reply.content["arrays"].to_torch_state_dict()
                     decrypted_weights.append(ArrayRecord(state_dict))
 
                 num_examples.append(
-                    reply.content["metrics"].data.get("num-examples", 1)
+                    reply.content["metrics"].get("num-examples", 1)
                 )
                 metrics_list.append(reply.content["metrics"])
             else:
@@ -165,10 +174,12 @@ class EncryptedFedAvg(FedAvg):
         # Perform weighted aggregation
         log(INFO, f"[Server] Aggregating {len(decrypted_weights)} weight sets")
         total_examples = sum(num_examples)
+        log(INFO, f"[Server] {total_examples} total examples")
 
         # Aggregate state dicts
         aggregated_state_dict = {}
         first_state_dict = decrypted_weights[0].to_torch_state_dict()
+        log(INFO, f"[Server] first_state_dict keys: {list(first_state_dict.keys())}")
 
         for key in first_state_dict.keys():
             weighted_sum = torch.zeros_like(first_state_dict[key])
@@ -178,12 +189,13 @@ class EncryptedFedAvg(FedAvg):
                 weighted_sum += weight * state_dict[key]
             aggregated_state_dict[key] = weighted_sum
 
+        log(INFO, f"[Server] aggregated_state_dict = {aggregated_state_dict}")
         # Aggregate metrics
         aggregated_metrics = {}
         if metrics_list:
             # Average train_loss weighted by num_examples
             total_loss = sum(
-                m.data.get("train_loss", 0) * num_examples[i]
+                m.get("train_loss", 0) * num_examples[i]
                 for i, m in enumerate(metrics_list)
             )
             aggregated_metrics["train_loss"] = total_loss / total_examples
@@ -262,8 +274,8 @@ class EncryptedFedAvg(FedAvg):
         metrics_list = []
 
         for reply in replies:
-            # Get string node ID from metrics and Grid node ID from metadata
-            node_id_str = reply.content["metrics"].data.get("node-id", "unknown")
+            # Get string node ID from content and Grid node ID from metadata
+            node_id_str = reply.content.get("node_config", ConfigRecord({})).get("node_id", "unknown")
             grid_node_id = reply.metadata.src_node_id
 
             # Build mapping from Grid ID to string node ID (if not already learned)
@@ -273,7 +285,7 @@ class EncryptedFedAvg(FedAvg):
 
             log(INFO, f"[Server] Received evaluation from node {node_id_str}")
 
-            num_examples.append(reply.content["metrics"].data.get("num-examples", 1))
+            num_examples.append(reply.content["metrics"].get("num-examples", 1))
             metrics_list.append(reply.content["metrics"])
 
         if not metrics_list:
@@ -285,11 +297,11 @@ class EncryptedFedAvg(FedAvg):
 
         # Average eval_loss and eval_acc weighted by num_examples
         total_loss = sum(
-            m.data.get("eval_loss", 0) * num_examples[i]
+            m.get("eval_loss", 0) * num_examples[i]
             for i, m in enumerate(metrics_list)
         )
         total_acc = sum(
-            m.data.get("eval_acc", 0) * num_examples[i]
+            m.get("eval_acc", 0) * num_examples[i]
             for i, m in enumerate(metrics_list)
         )
 

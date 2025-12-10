@@ -1,7 +1,7 @@
 """authexample: An authenticated Flower / PyTorch app with encrypted weights."""
 
 import torch
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common.logger import log
 from logging import INFO
@@ -35,7 +35,7 @@ def train(msg: Message, context: Context):
     log(INFO, f"[Node {node_id}] Decrypting received model weights...")
 
     try:
-        arrays_list = msg.content["arrays"].to_numpy()
+        arrays_list = msg.content["arrays"].to_numpy_ndarrays()
         # Check if we have encrypted data (numpy uint8 array)
         if len(arrays_list) > 0 and arrays_list[0].dtype.name == "uint8":
             encrypted_array = arrays_list[0]
@@ -82,10 +82,14 @@ def train(msg: Message, context: Context):
     metrics = {
         "train_loss": train_loss,
         "num-examples": len(trainloader.dataset),
-        "node-id": node_id,
     }
     metric_record = MetricRecord(metrics)
-    content = RecordDict({"arrays": model_record, "metrics": metric_record})
+    node_config = ConfigRecord({"node_id": node_id})
+    content = RecordDict({
+        "arrays": model_record, 
+        "metrics": metric_record,
+        "node_config": node_config,
+    })
     return Message(content=content, reply_to=msg)
 
 
@@ -106,7 +110,7 @@ def evaluate(msg: Message, context: Context):
     log(INFO, f"[Node {node_id}] Decrypting model weights for evaluation...")
 
     try:
-        arrays_list = msg.content["arrays"].to_numpy()
+        arrays_list = msg.content["arrays"].to_numpy_ndarrays()
         # Check if we have encrypted data (numpy uint8 array)
         if len(arrays_list) > 0 and arrays_list[0].dtype.name == "uint8":
             encrypted_array = arrays_list[0]
@@ -149,8 +153,11 @@ def evaluate(msg: Message, context: Context):
         "eval_loss": eval_loss,
         "eval_acc": eval_acc,
         "num-examples": len(valloader.dataset),
-        "node-id": node_id,
     }
     metric_record = MetricRecord(metrics)
-    content = RecordDict({"metrics": metric_record})
+    node_config = ConfigRecord({"node_id": node_id})
+    content = RecordDict({
+        "metrics": metric_record,
+        "node_config": node_config,
+    })
     return Message(content=content, reply_to=msg)
