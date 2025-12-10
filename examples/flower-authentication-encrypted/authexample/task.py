@@ -3,9 +3,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from datasets import load_from_disk
-from torch.utils.data import DataLoader
-from torchvision.transforms import Compose, Normalize, ToTensor
+from torch.utils.data import DataLoader, TensorDataset
+import os
 
 
 class Net(nn.Module):
@@ -30,21 +29,24 @@ class Net(nn.Module):
 
 
 def load_data_from_disk(path: str, batch_size: int):
-    partition_train_test = load_from_disk(path)
-    pytorch_transforms = Compose(
-        [ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-    )
-
-    def apply_transforms(batch):
-        """Apply transforms to the partition from FederatedDataset."""
-        batch["img"] = [pytorch_transforms(img) for img in batch["img"]]
-        return batch
-
-    partition_train_test = partition_train_test.with_transform(apply_transforms)
-    trainloader = DataLoader(
-        partition_train_test["train"], batch_size=batch_size, shuffle=True
-    )
-    testloader = DataLoader(partition_train_test["test"], batch_size=batch_size)
+    """Load data from the prepared dataset partitions."""
+    data_file = os.path.join(path, "data.pt")
+    data = torch.load(data_file, weights_only=True)
+    
+    # Extract tensors
+    train_data = data['train_data']
+    train_targets = data['train_targets']
+    test_data = data['test_data']
+    test_targets = data['test_targets']
+    
+    # Create TensorDatasets
+    train_dataset = TensorDataset(train_data, train_targets)
+    test_dataset = TensorDataset(test_data, test_targets)
+    
+    # Create DataLoaders
+    trainloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    testloader = DataLoader(test_dataset, batch_size=batch_size)
+    
     return trainloader, testloader
 
 
@@ -56,9 +58,9 @@ def train(net, trainloader, epochs, learning_rate, device):
     net.train()
     running_loss = 0.0
     for _ in range(epochs):
-        for batch in trainloader:
-            images = batch["img"].to(device)
-            labels = batch["label"].to(device)
+        for images, labels in trainloader:
+            images = images.to(device)
+            labels = labels.to(device)
             optimizer.zero_grad()
             loss = criterion(net(images), labels)
             loss.backward()
@@ -73,9 +75,9 @@ def test(net, testloader, device):
     criterion = torch.nn.CrossEntropyLoss()
     correct, loss = 0, 0.0
     with torch.no_grad():
-        for batch in testloader:
-            images = batch["img"].to(device)
-            labels = batch["label"].to(device)
+        for images, labels in testloader:
+            images = images.to(device)
+            labels = labels.to(device)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
