@@ -1,0 +1,63 @@
+# Dockerfile for TRE Analyzer (SuperLink) Service
+FROM python:3.10-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libffi-dev \
+    openssl \
+    openssh-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY tre/requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the flower app (authexample package)
+COPY authexample /app/flower-app/authexample/
+COPY pyproject.toml /app/flower-app/
+
+# Install the flower app
+WORKDIR /app/flower-app
+RUN pip install -e .
+
+# Copy TRE service code
+WORKDIR /app
+COPY tre/shared /app/shared/
+COPY tre/analyzer_service /app/analyzer_service/
+
+# Create data directories
+RUN mkdir -p /app/data/certificates /app/data/keys /app/data/encryption_keys
+
+# Set environment variables for the service
+ENV FLOWER_APP_PATH=/app/flower-app
+ENV DATA_DIR=/app/data
+ENV CERTIFICATES_DIR=/app/data/certificates
+ENV KEYS_DIR=/app/data/keys
+ENV ENCRYPTION_KEYS_DIR=/app/data/encryption_keys
+
+# Expose ports
+# Flask API
+EXPOSE 5000
+# SuperLink Fleet API
+EXPOSE 9092
+# SuperLink Control API
+EXPOSE 9093
+# SuperLink ServerAppIo API
+EXPOSE 9091
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Run the Flask app with gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "analyzer_service.app:create_app()"]

@@ -1,0 +1,203 @@
+# Docker Compose for TRE Flower Federated Learning Microservices
+#
+# This configuration sets up:
+# - 1 Analyzer service (SuperLink + REST API)
+# - 2 Data Owner services (SuperNode + REST API)
+# - PostgreSQL database for persistent state
+# - Redis for optional caching/message queue
+# - Shared network for internal communication
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # DATABASE SERVICES
+  # ==========================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: tre_postgres
+    environment:
+      POSTGRES_USER: flower
+      POSTGRES_PASSWORD: flower_secret
+      POSTGRES_DB: flower_federation
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - tre_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flower"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tre_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - tre_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # ANALYZER SERVICE (Central Server)
+  # ==========================================
+
+  analyzer:
+    build:
+      context: ..
+      dockerfile: tre/Dockerfile.analyzer
+    container_name: tre_analyzer
+    environment:
+      - FLOWER_APP_PATH=/app/flower-app
+      - DATA_DIR=/app/data
+      - CERTIFICATES_DIR=/app/data/certificates
+      - KEYS_DIR=/app/data/keys
+      - ENCRYPTION_KEYS_DIR=/app/data/encryption_keys
+      - SUPERLINK_INSECURE=false
+      - SUPERLINK_ENABLE_AUTH=true
+      - SUPERLINK_DATABASE=/app/data/flower_state.db
+    volumes:
+      # Mount shared certificates and keys
+      - ./data/certificates:/app/data/certificates
+      - ./data/keys:/app/data/keys
+      - ./data/encryption_keys:/app/data/encryption_keys
+      # Persistent data
+      - analyzer_data:/app/data/state
+    ports:
+      # Flask REST API
+      - "5000:5000"
+      # SuperLink Fleet API (for SuperNodes)
+      - "9092:9092"
+      # SuperLink Control API (for flwr CLI)
+      - "9093:9093"
+      # SuperLink ServerAppIo API
+      - "9091:9091"
+    networks:
+      - tre_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ==========================================
+  # DATA OWNER SERVICES (Client Nodes)
+  # ==========================================
+
+  dataowner_1:
+    build:
+      context: ..
+      dockerfile: tre/Dockerfile.dataowner
+    container_name: tre_dataowner_1
+    environment:
+      - NODE_ID=1
+      - DATA_DIR=/app/data
+      - DATASET_PATH=/app/data/datasets/cifar10_part_1
+      - KEYS_DIR=/app/data/keys
+      - ENCRYPTION_KEYS_DIR=/app/data/encryption_keys
+      - CERTIFICATES_DIR=/app/data/certificates
+      - MODELS_DIR=/app/data/models
+      - SUPERLINK_ADDRESS=analyzer:9092
+    volumes:
+      # Mount certificates (CA cert only needed)
+      - ./data/certificates/ca.crt:/app/data/certificates/ca.crt:ro
+      # Mount node-specific keys
+      - ./data/keys/client_credentials_1:/app/data/keys/client_credentials_1:ro
+      - ./data/keys/client_credentials_1.pub:/app/data/keys/client_credentials_1.pub:ro
+      - ./data/encryption_keys/node-1_key.bin:/app/data/encryption_keys/node-1_key.bin:ro
+      # Mount dataset
+      - ./data/datasets/cifar10_part_1:/app/data/datasets/cifar10_part_1:ro
+      # Persistent data
+      - dataowner_1_data:/app/data/models
+    ports:
+      # Flask REST API
+      - "5001:5001"
+      # SuperNode ClientAppIo API
+      - "9094:9094"
+    networks:
+      - tre_network
+    depends_on:
+      - analyzer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  dataowner_2:
+    build:
+      context: ..
+      dockerfile: tre/Dockerfile.dataowner
+    container_name: tre_dataowner_2
+    environment:
+      - NODE_ID=2
+      - DATA_DIR=/app/data
+      - DATASET_PATH=/app/data/datasets/cifar10_part_2
+      - KEYS_DIR=/app/data/keys
+      - ENCRYPTION_KEYS_DIR=/app/data/encryption_keys
+      - CERTIFICATES_DIR=/app/data/certificates
+      - MODELS_DIR=/app/data/models
+      - SUPERLINK_ADDRESS=analyzer:9092
+    volumes:
+      # Mount certificates (CA cert only needed)
+      - ./data/certificates/ca.crt:/app/data/certificates/ca.crt:ro
+      # Mount node-specific keys
+      - ./data/keys/client_credentials_2:/app/data/keys/client_credentials_2:ro
+      - ./data/keys/client_credentials_2.pub:/app/data/keys/client_credentials_2.pub:ro
+      - ./data/encryption_keys/node-2_key.bin:/app/data/encryption_keys/node-2_key.bin:ro
+      # Mount dataset
+      - ./data/datasets/cifar10_part_2:/app/data/datasets/cifar10_part_2:ro
+      # Persistent data
+      - dataowner_2_data:/app/data/models
+    ports:
+      # Flask REST API
+      - "5002:5001"
+      # SuperNode ClientAppIo API
+      - "9095:9094"
+    networks:
+      - tre_network
+    depends_on:
+      - analyzer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# ==========================================
+# NETWORKS
+# ==========================================
+
+networks:
+  tre_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ==========================================
+# VOLUMES
+# ==========================================
+
+volumes:
+  postgres_data:
+  redis_data:
+  analyzer_data:
+  dataowner_1_data:
+  dataowner_2_data:

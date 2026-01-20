@@ -178,7 +178,7 @@ flwr supernode list . my-federation
 
 In a new terminal window, start the first long-running Flower client (SuperNode):
 
-```bash
+```
 flower-supernode \
     --root-certificates certificates/ca.crt \
     --auth-supernode-private-key keys/client_credentials_1 \
@@ -189,7 +189,7 @@ flower-supernode \
 
 In yet another new terminal window, start the second long-running Flower client:
 
-```bash
+```
 flower-supernode \
     --root-certificates certificates/ca.crt \
     --auth-supernode-private-key keys/client_credentials_2 \
